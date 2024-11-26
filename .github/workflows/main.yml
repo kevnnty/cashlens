@@ -1,0 +1,91 @@
+name: Build, Publish and Run Container
+
+on:
+  push:
+    branches:
+      - master
+
+env:
+  REPO_NAME: kejiah
+  IMAGE_NAME: kejiah-wallet-server
+  TAG_NAME: latest
+  DOCKER_PROJECT_NAME: wallet-backend
+  CONTAINER_NAME: kejiah-wallet-server-container
+
+jobs:
+  build-and-publish:
+    runs-on: [ubuntu-latest]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v3
+
+      - name: Login to docker hub
+        run: docker login -u ${{ secrets.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build docker image
+        run: docker build -t $REPO_NAME/$IMAGE_NAME .
+
+      - name: Publish image to docker hub
+        run: docker push $REPO_NAME/$IMAGE_NAME:$TAG_NAME
+
+  run-and-start:
+    needs: build-and-publish
+    runs-on: [self-hosted]
+
+    steps:
+      - name: delete existing .env
+        run: rm -f .env
+
+      - name: Create .env file
+        run: |
+          touch .env
+          echo PORT=${{ secrets.PORT }} >> .env
+          echo WHITE_LISTED_DOMAINS=${{ secrets.WHITE_LISTED_DOMAINS }} >> .env
+          echo NODE_ENV=${{ secrets.NODE_ENV }} >> .env
+          echo DB_HOST=${{ secrets.DB_HOST }} >> .env
+          echo DB_PORT=${{ secrets.DB_PORT }} >> .env
+          echo DB_SCHEMA=${{ secrets.DB_SCHEMA }} >> .env
+          echo POSTGRES_USER=${{ secrets.POSTGRES_USER }} >> .env
+          echo POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} >> .env
+          echo POSTGRES_DB=${{ secrets.POSTGRES_DB }} >> .env
+          echo DATABASE_URL="postgresql://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@${{ secrets.DB_HOST }}:${{ secrets.DB_PORT }}/${{ secrets.POSTGRES_DB }}?schema=${{ secrets.DB_SCHEMA }}&sslmode=prefer" >> .env
+          echo REDIS_CACHE_HOST=${{ secrets.REDIS_CACHE_HOST }} >> .env
+          echo REDIS_CACHE_PORT=${{ secrets.REDIS_CACHE_PORT }} >> .env
+          echo REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }} >> .env
+          echo CLOUDINARY_CLOUD_NAME=${{ secrets.CLOUDINARY_CLOUD_NAME }} >> .env
+          echo CLOUDINARY_API_KEY=${{ secrets.CLOUDINARY_API_KEY }} >> .env
+          echo CLOUDINARY_API_SECRET=${{ secrets.CLOUDINARY_API_SECRET }} >> .env
+          echo SALTWORKFACTOR=${{ secrets.SALTWORKFACTOR }} >> .env
+          echo ACCESSTOKENTTL=${{ secrets.ACCESSTOKENTTL }} >> .env
+          echo REFRESHTOKENTTL=${{ secrets.REFRESHTOKENTTL }} >> .env
+          echo MAILING_EMAIL=${{ secrets.MAILING_EMAIL }} >> .env
+          echo MAILING_PASSWORD=${{ secrets.MAILING_PASSWORD }} >> .env
+          echo JWT_PUBLIC_KEY=${{ secrets.JWT_PUBLIC_KEY }} >> .env
+          echo JWT_PRIVATE_KEY=${{ secrets.JWT_PRIVATE_KEY }} >> .env
+          echo PAYSTACK_SECRET_KEY=${{ secrets.PAYSTACK_SECRET_KEY }} >> .env
+        shell: bash
+
+      - name: Copy docker-compose.prod to runner
+        run: curl https://raw.githubusercontent.com/kejiahp/nestjs-wallet-management-system/master/docker-compose.prod.yml --output docker-compose.yml
+
+      - name: Stop all conatainers
+        run: docker compose -p ${DOCKER_PROJECT_NAME} stop
+
+      - name: Drop all conatainers
+        run: docker compose -p ${DOCKER_PROJECT_NAME} down
+
+      - name: Login to docker hub (especially if your image is private)
+        run: docker login -u ${{ secrets.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: pull latest service image
+        run: docker compose pull ${IMAGE_NAME}
+
+      - name: start all containers
+        run: docker compose up -d
+
+      - name: run prisma migrations (did this to avoid TTY errors)
+        run: echo "npx prisma migrate deploy" | docker exec -i kejiah-wallet-server-container sh
